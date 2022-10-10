@@ -4,6 +4,8 @@ namespace GView::Type::Matcher
 {
 TextParser::TextParser(const char16* text, uint32 size)
 {
+    this->Lines.computed = false;
+
     if ((text == nullptr) || (size == 0))
     {
         this->Raw.text  = nullptr;
@@ -15,12 +17,12 @@ TextParser::TextParser(const char16* text, uint32 size)
     {
         this->Raw.text = text;
         this->Raw.size = size;
-        
+
         auto p = text;
         auto e = text + size;
         while ((p < e) && (((*p) == ' ') || ((*p) == '\t') || ((*p) == '\n') || ((*p) == '\r')))
             p++;
-        if (p==e)
+        if (p == e)
         {
             this->Raw.text  = nullptr;
             this->Text.text = nullptr;
@@ -33,5 +35,27 @@ TextParser::TextParser(const char16* text, uint32 size)
             this->Text.size = static_cast<uint32>(e - p);
         }
     }
+}
+void TextParser::ComputeLineOffsets()
+{
+    auto p            = this->Text.text;
+    auto e            = this->Text.text + this->Text.size;
+    auto maxLines     = ARRAY_LEN(this->Lines.offsets);
+    this->Lines.count = 0;
+
+    while ((p < e) && (this->Lines.count < maxLines))
+    {
+        // skip any new line until a valid character
+        while ((p < e) && (((*p) == '\n') || ((*p) == '\r')))
+            p++;
+        // skip any space or tab
+        while ((p < e) && (((*p) == ' ') || ((*p) == '\t')))
+            p++;
+        this->Lines.offsets[this->Lines.count++] = static_cast<uint32>(p - this->Text.text);
+        // skip until a new line
+        while ((p < e) && ((*p) != '\n') && ((*p) != '\r'))
+            p++;
+    }
+    this->Lines.computed = true;
 }
 } // namespace GView::Type::Matcher

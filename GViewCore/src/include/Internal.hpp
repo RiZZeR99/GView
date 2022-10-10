@@ -3,6 +3,7 @@
 #include "GView.hpp"
 
 #include <set>
+#include <span>
 
 using namespace AppCUI::Controls;
 using namespace AppCUI::Graphics;
@@ -325,16 +326,25 @@ namespace Type
                 const char16* text;
                 uint32 size;
             } Text;
+            struct
+            {
+                uint32 offsets[10];
+                uint32 count;
+                bool computed;
+            } Lines;
+            void ComputeLineOffsets();
 
           public:
             TextParser(const char16* text, uint32 size);
-            inline const char16* GetText() const
+            inline std::u16string_view GetText() const
             {
-                return Text.text;
+                return { Text.text, static_cast<size_t>(Text.size) };
             }
-            inline uint32 GetTextLength() const
+            inline std::span<uint32> GetLines()
             {
-                return Text.size;
+                if (!Lines.computed)
+                    ComputeLineOffsets();
+                return std::span<uint32>(this->Lines.offsets, static_cast<size_t>(this->Lines.count));
             }
         };
         struct Interface
@@ -363,6 +373,15 @@ namespace Type
         class StartsWithMatcher : public Interface
         {
             FixSizeString<61> value;
+
+          public:
+            virtual bool Init(std::string_view text) override;
+            virtual bool Match(AppCUI::Utils::BufferView buf, TextParser& text) override;
+        };
+        class LineStartsWithMatcher : public Interface
+        {
+            FixSizeString<61> value;
+            bool CheckStartsWith(TextParser& text, uint32 offset);
 
           public:
             virtual bool Init(std::string_view text) override;
@@ -468,6 +487,7 @@ namespace App
             AppCUI::Input::Key switchToView;
             AppCUI::Input::Key goTo;
             AppCUI::Input::Key find;
+            AppCUI::Input::Key choseNewType;
         } Keys;
 
         bool BuildMainMenus();
@@ -477,12 +497,35 @@ namespace App
 
         Reference<Type::Plugin> IdentifyTypePlugin_FirstMatch(
               AppCUI::Utils::BufferView buf, GView::Type::Matcher::TextParser& textParser, uint64 extensionHash);
+        Reference<Type::Plugin> IdentifyTypePlugin_BestMatch(
+              const AppCUI::Utils::ConstString& name,
+              const AppCUI::Utils::ConstString& path,
+              uint64 dataSize,
+              AppCUI::Utils::BufferView buf,
+              GView::Type::Matcher::TextParser& textParser,
+              uint64 extensionHash);
         Reference<Type::Plugin> IdentifyTypePlugin_Select(
-              AppCUI::Utils::BufferView buf, GView::Type::Matcher::TextParser& textParser, uint64 extensionHash);
+              const AppCUI::Utils::ConstString& name,
+              const AppCUI::Utils::ConstString& path,
+              uint64 dataSize,
+              AppCUI::Utils::BufferView buf,
+              GView::Type::Matcher::TextParser& textParser,
+              uint64 extensionHash);
         Reference<Type::Plugin> IdentifyTypePlugin_WithSelectedType(
-              AppCUI::Utils::BufferView buf, GView::Type::Matcher::TextParser& textParser, uint64 extensionHash, std::string_view typeName);
+              const AppCUI::Utils::ConstString& name,
+              const AppCUI::Utils::ConstString& path,
+              uint64 dataSize,
+              AppCUI::Utils::BufferView buf,
+              GView::Type::Matcher::TextParser& textParser,
+              uint64 extensionHash,
+              std::string_view typeName);
         Reference<Type::Plugin> IdentifyTypePlugin(
-              GView::Utils::DataCache& cache, uint64 extensionHash, OpenMethod method, std::string_view typeName);
+              const AppCUI::Utils::ConstString& name,
+              const AppCUI::Utils::ConstString& path,
+              GView::Utils::DataCache& cache,
+              uint64 extensionHash,
+              OpenMethod method,
+              std::string_view typeName);
         bool Add(
               GView::Object::Type objType,
               std::unique_ptr<AppCUI::OS::DataObject> data,
@@ -521,6 +564,10 @@ namespace App
         {
             return this->Keys.find;
         }
+        constexpr inline AppCUI::Input::Key GetChoseNewTypeKey() const
+        {
+            return this->Keys.choseNewType;
+        }
 
         // property interface
         virtual bool GetPropertyValue(uint32 propertyID, PropertyValue& value) override;
@@ -540,6 +587,46 @@ namespace App
         uint32 GetTypePluginsCount();
         std::string_view GetTypePluginName(uint32 index);
         std::string_view GetTypePluginDescription(uint32 index);
+    };
+
+    class SelectTypeDialog : public Window
+    {
+        Reference<CanvasViewer> canvas;
+        Reference<ComboBox> cbView, cbType;
+
+        AppCUI::Utils::BufferView buf;
+        GView::Type::Matcher::TextParser& textParser;
+        std::vector<GView::Type::Plugin>& typePlugins;
+
+        GView::Type::Plugin* result;
+
+        void PaintHex();
+        void PaintBuffer();
+        void PaintText(bool wrap);
+
+        void Validate();
+        void UpdateView(uint64 mode);
+        void PopulateViewModes();
+        void PopulateTypes(
+              std::vector<GView::Type::Plugin>& typePlugins,
+              AppCUI::Utils::BufferView buf,
+              GView::Type::Matcher::TextParser& textParser,
+              uint64 extensionHash);
+
+      public:
+        SelectTypeDialog(
+              const AppCUI::Utils::ConstString& name,
+              const AppCUI::Utils::ConstString& path,
+              uint64 dataSize,
+              std::vector<GView::Type::Plugin>& typePlugins,
+              AppCUI::Utils::BufferView buf,
+              GView::Type::Matcher::TextParser& textParser,
+              uint64 extensionHash);
+        bool OnEvent(Reference<Control>, Event eventType, int) override;
+        inline Reference<GView::Type::Plugin> GetSelectedPlugin(Reference<GView::Type::Plugin> errorValue) const
+        {
+            return result ? result : errorValue;
+        }
     };
 
     class FileWindowProperties : public Window

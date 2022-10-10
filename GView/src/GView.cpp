@@ -62,8 +62,10 @@ Where <command> is on of:
    list-types             List all available types (as loaded from gview.ini).
                           Ex: 'GView list-types' 
 And <options> are:
-   -type:<type>           Specify the type of the file (if knwon)
-                          Ex: 'GView open a.temp -type:PE'     
+   --type:<type>          Specify the type of the file (if knwon)
+                          Ex: 'GView open a.temp --type:PE'    
+   --selectType           Specify the type of the file should be manually selected
+                          Ex: 'GView open a.temp --selectType'   
 )HELP";
 
 void ShowHelp()
@@ -124,10 +126,15 @@ int ProcessOpenCommand(int argc, T** argv, int startIndex)
                 tempString.AddChar(static_cast<char>(*p));
                 p++;
             }
-            if (tempString.StartsWith("-type:", true))
+            if (tempString.StartsWith("--type:", true))
             {
                 method = GView::App::OpenMethod::ForceType;
-                type.Set(tempString.ToStringView().substr(6));
+                type.Set(tempString.ToStringView().substr(7));
+                continue;
+            }
+            if (tempString.Equals("--selectType", true))
+            {
+                method = GView::App::OpenMethod::Select;
                 continue;
             }
             std::cout << "Unknwon option: " << tempString.ToStringView() << std::endl;

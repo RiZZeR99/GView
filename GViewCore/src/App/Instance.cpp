@@ -68,6 +68,7 @@ Instance::Instance()
 {
     this->defaultCacheSize  = DEFAULT_CACHE_SIZE;
     this->Keys.changeViews  = Key::F4;
+    this->Keys.choseNewType = Key::Alt | Key::F1;
     this->Keys.find         = Key::Alt | Key::F7;
     this->Keys.switchToView = Key::Alt | Key::F;
     this->Keys.goTo         = Key::F5;
@@ -120,6 +121,7 @@ bool Instance::LoadSettings()
     this->Keys.switchToView = sect.GetValue("Key.SwitchToView").ToKey(Key::F | Key::Alt);
     this->Keys.find         = sect.GetValue("Key.Find").ToKey(Key::F7 | Key::Alt);
     this->Keys.goTo         = sect.GetValue("Key.GoTo").ToKey(Key::F5);
+    this->Keys.choseNewType = sect.GetValue("Key.ChoseType").ToKey(Key::F1 | Key::Alt);
 
     return true;
 }
@@ -153,7 +155,13 @@ bool Instance::Init()
     return true;
 }
 Reference<GView::Type::Plugin> Instance::IdentifyTypePlugin_WithSelectedType(
-      AppCUI::Utils::BufferView buf, GView::Type::Matcher::TextParser& textParser, uint64 extensionHash, std::string_view typeName)
+      const AppCUI::Utils::ConstString& name,
+      const AppCUI::Utils::ConstString& path,
+      uint64 dataSize,
+      AppCUI::Utils::BufferView buf,
+      GView::Type::Matcher::TextParser& textParser,
+      uint64 extensionHash,
+      std::string_view typeName)
 {
     GView::Type::Plugin* plg = nullptr;
     // search for the pluggin
@@ -178,7 +186,7 @@ Reference<GView::Type::Plugin> Instance::IdentifyTypePlugin_WithSelectedType(
         temp.Add(typeName);
         AppCUI::Dialogs::MessageBox::ShowError("Error", temp);
         // default to selection mode
-        return IdentifyTypePlugin_Select(buf, textParser, extensionHash);
+        return IdentifyTypePlugin_Select(name, path, dataSize, buf, textParser, extensionHash);
     }
     // check if the parser accepts it
     if (plg->IsOfType(buf, textParser) == false)
@@ -188,16 +196,23 @@ Reference<GView::Type::Plugin> Instance::IdentifyTypePlugin_WithSelectedType(
         temp.Add(typeName);
         AppCUI::Dialogs::MessageBox::ShowError("Error", temp);
         // default to selection mode
-        return IdentifyTypePlugin_Select(buf, textParser, extensionHash);
+        return IdentifyTypePlugin_Select(name, path, dataSize, buf, textParser, extensionHash);
     }
     // all good return the type plugin
     return plg;
 }
 Reference<GView::Type::Plugin> Instance::IdentifyTypePlugin_Select(
-      AppCUI::Utils::BufferView buf, GView::Type::Matcher::TextParser& textParser, uint64 extensionHash)
+      const AppCUI::Utils::ConstString& name,
+      const AppCUI::Utils::ConstString& path,
+      uint64 dataSize,
+      AppCUI::Utils::BufferView buf,
+      GView::Type::Matcher::TextParser& textParser,
+      uint64 extensionHash)
 {
-    // GDT: for the moment a default implementation
-    return IdentifyTypePlugin_FirstMatch(buf, textParser, extensionHash);
+    SelectTypeDialog dlg(name, path, dataSize, this->typePlugins, buf, textParser, extensionHash);
+    if (dlg.Show() == Dialogs::Result::Ok)
+        return dlg.GetSelectedPlugin(&this->defaultPlugin);
+    return nullptr;
 }
 Reference<GView::Type::Plugin> Instance::IdentifyTypePlugin_FirstMatch(
       AppCUI::Utils::BufferView buf, GView::Type::Matcher::TextParser& textParser, uint64 extensionHash)
@@ -228,8 +243,58 @@ Reference<GView::Type::Plugin> Instance::IdentifyTypePlugin_FirstMatch(
     // nothing matched => return the default plugin
     return &this->defaultPlugin;
 }
+Reference<GView::Type::Plugin> Instance::IdentifyTypePlugin_BestMatch(
+      const AppCUI::Utils::ConstString& name,
+      const AppCUI::Utils::ConstString& path,
+      uint64 dataSize,
+      AppCUI::Utils::BufferView buf,
+      GView::Type::Matcher::TextParser& textParser,
+      uint64 extensionHash)
+{
+    auto plg   = &this->defaultPlugin;
+    auto count = 0;
+    if (extensionHash != 0)
+    {
+        for (auto& pType : this->typePlugins)
+        {
+            if (pType.MatchExtension(extensionHash))
+            {
+                if (pType.IsOfType(buf, textParser))
+                {
+                    count++;
+                    plg = &pType;
+                    if (count > 1) // at least two options
+                        return IdentifyTypePlugin_Select(name, path, dataSize, buf, textParser, extensionHash);
+                }
+            }
+        }
+    }
+
+    // check the content
+    for (auto& pType : this->typePlugins)
+    {
+        if (pType.MatchContent(buf, textParser))
+        {
+            if (pType.IsOfType(buf, textParser))
+            {
+                count++;
+                plg = &pType;
+                if (count > 1) // at least two options
+                    return IdentifyTypePlugin_Select(name, path, dataSize, buf, textParser, extensionHash);
+            }
+        }
+    }
+
+    // nothing matched => return the default plugin
+    return plg;
+}
 Reference<GView::Type::Plugin> Instance::IdentifyTypePlugin(
-      GView::Utils::DataCache& cache, uint64 extensionHash, OpenMethod method, std::string_view typeName)
+      const AppCUI::Utils::ConstString& name,
+      const AppCUI::Utils::ConstString& path,
+      GView::Utils::DataCache& cache,
+      uint64 extensionHash,
+      OpenMethod method,
+      std::string_view typeName)
 {
     auto buf    = cache.Get(0, 0x8800, false);
     auto bomLen = 0U;
@@ -237,18 +302,18 @@ Reference<GView::Type::Plugin> Instance::IdentifyTypePlugin(
     auto text   = enc != GView::Utils::CharacterEncoding::Encoding::Binary ? GView::Utils::CharacterEncoding::ConvertToUnicode16(buf)
                                                                            : GView::Utils::UnicodeString();
     auto tp     = GView::Type::Matcher::TextParser(text.text, text.size);
+    auto sz     = cache.GetSize();
 
     switch (method)
     {
     case OpenMethod::FirstMatch:
         return IdentifyTypePlugin_FirstMatch(buf, tp, extensionHash);
     case OpenMethod::BestMatch:
-        // GDT: use FirstMath for the moment
-        return IdentifyTypePlugin_FirstMatch(buf, tp, extensionHash);
+        return IdentifyTypePlugin_BestMatch(name, path, sz, buf, tp, extensionHash);
     case OpenMethod::Select:
-        return IdentifyTypePlugin_Select(buf, tp, extensionHash);
+        return IdentifyTypePlugin_Select(name, path, sz, buf, tp, extensionHash);
     case OpenMethod::ForceType:
-        return IdentifyTypePlugin_WithSelectedType(buf, tp, extensionHash, typeName);
+        return IdentifyTypePlugin_WithSelectedType(name, path, sz, buf, tp, extensionHash, typeName);
     }
 
     // for other methods --> return the default plugin
@@ -274,7 +339,8 @@ bool Instance::Add(
     auto extHash = pos != u16string_view::npos ? GView::Type::Plugin::ExtensionToHash(temp.ToStringView().substr(pos))
                                                : GView::Type::Plugin::ExtensionToHash("");
 
-    auto plg = IdentifyTypePlugin(cache, extHash, method, typeName);
+    auto plg = IdentifyTypePlugin(name, path, cache, extHash, method, typeName);
+    CHECK(plg, false, "Unable to identify a valid plugin open canceled !");
 
     // create an instance of that object type
     auto contentType = plg->CreateInstance();
