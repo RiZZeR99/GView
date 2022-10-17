@@ -69,7 +69,7 @@ FindAllDialog::FindAllDialog(const TokenObject& currentToken, const std::vector<
         item.SetText(1, content);
         for (auto idx = 0; idx < indexesCount; idx++)
         {
-            item.HighlightText(1, indexes[idx], ctokSize);
+            //item.HighlightText(1, indexes[idx], ctokSize);
         }
         lastLine = tok.lineNo;
     }
